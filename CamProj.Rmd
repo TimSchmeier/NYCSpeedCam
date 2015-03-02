@@ -1,0 +1,232 @@
+---
+title: "NYC Speed Camera Program: Revenue or Safety? We'll get you up to Speed in a Flash!"
+author: "Tim Schmeier"
+date: "Thursday, February 12, 2015"
+output: html_document
+---
+
+Are speed cameras a tool increase safety? Or a revenue grab by local governments plugging budget deficits? With the implementation of a speed camera program in NYC and inspired by the excellent work at "I Quant NY" I decided to parse through the data and look for the answer. Two questions pervade this issue and are the focus of this analysis.
+
+1. Are the speed cameras distributed in order to maximize public safety or revenue? 
+
+2. Have the speed cameras demonstrated any relationship with pedestrian/vehicle collision reduction?
+
+#The purpose of Speed Camera deployment, public safety or revenue?
+
+The legislation allowing speed cameras purports to protect school children and requires cameras to operate within ¼ mile of a school building and only during "school hours". Consistent with this goal we would expect cameras to be distributed in areas of unusually high school density. Another distribution strategy consistent with public safety would be to have the cameras distributed in areas known to have a higher than average vehicle/pedestrian collision rate. If speed camera deployment deviates from these distributions we will conclude public safety was not the primary goal of the speed camera program.
+
+To examine the premise that speed cameras increase public safety we can compare the collision rate after the cameras were installed with the same period 1 year before camera installation. Conflicting conclusions exist in the literature and many studies examine only speed reduction and many overlook the fundamental measure of safety, the collision rate. The speed camera data were only available from 1/16/2014 - 6/20/2014 at the time of this analysis so collision data will be compared with the prior year over the same time period. Only pedestrian/vehicle collisions will be analyzed as is consistent with Vision Zero and the legislative goal of protecting school-aged children.
+
+#####Data sets
+
+School.Loc Dataset:
+https://data.cityofnewyork.us/Education/NYC-School-Locations/i2i8-9vjc
+
+Speed.Cam Dataset:
+https://data.cityofnewyork.us/City-Government/Speed-Camera-Tickets/3nky-hkft
+
+Accidents Dataset:
+https://data.cityofnewyork.us/NYC-BigApps/NYPD-Motor-Vehicle-Collisions/h9gi-nx95
+
+Geocoding NYC's school locations
+
+```{r, eval=FALSE, warning=FALSE, message=FALSE}
+library(ggmap)
+School.Loc = read.csv('NYC_School_Locations.csv', stringsAsFactors=F)
+School.Loc$Address = paste(School.Loc$Address,", New York, NY", sep="", collapse = NULL)
+School.LonLat = geocode(School.Loc$Address)
+School.Loc = cbind(School.Loc, School.LonLat)
+```
+
+Subset NYPD motor vehicle accident data to include only accidents that include pedestrians.
+
+```{r, eval=FALSE, warning=FALSE, message=FALSE}
+library(plyr)
+library(dplyr)
+Accidents = read.csv("NYPD_Motor_Vehicle_Collisions.csv")
+Accidents = select(Accidents, NUMBER.OF.PEDESTRIANS.KILLED, NUMBER.OF.PEDESTRIANS.INJURED,
+                   DATE, BOROUGH, LATITUDE, LONGITUDE)
+Accidents = filter(Accidents, NUMBER.OF.PEDESTRIANS.KILLED >=1 | NUMBER.OF.PEDESTRIANS.INJURED >=1)
+Accidents = Accidents[complete.cases(Accidents$LONGITUDE,Accidents$LATITUDE),]
+Accidents$DATE = as.Date(as.character(Accidents$DATE), "%m/%d/%Y")
+colnames(Accidents) = c('Peds.Killed', 'Peds.Injured', 'Date', 'Borough', 'Lat', 'Lon')
+```
+
+The speed camera tickets dataset was challenging - each row corresponded to a single ticket issued. The ticket/camera locations were coded as the street where the ticket was issued and a small range of intersecting streets (with some locations overlapping). Additionally, the locations were coded with unwanted directionality (NB, SB, etc.) presenting an additional data reduction challenge. Manual recoding condensed 83 locations to just 57 by consolidating overlapping intersections and deleting directionality.
+
+```{r, eval=FALSE, warning=FALSE, message=FALSE}
+library(reshape2)
+Speed.Cam = read.csv('Speed_Camera_Tickets.csv', stringsAsFactors=F)
+Speed.Cam = select(Speed.Cam, Issue.Date, Street.Name, Intersecting.Street)
+Speed.Cam$Issue.Date = as.Date(as.character(Speed.Cam$Issue.Date), '%m/%d/%Y')
+Speed.Cam$Address = paste(Speed.Cam$Street.Name, Speed.Cam$Intersecting.Street, sep = "", collapse = NULL)
+Speed.Cam = select(Speed.Cam, Issue.Date, Address)
+range(Speed.Cam$Issue.Date)
+Speed.Cam.Melt = melt(Speed.Cam, id='Address')
+Cam = dcast(Speed.Cam.Melt, Address~., length)
+colnames(Cam) = c('Address', 'count')
+fix(Cam) 
+Cam = ddply(Cam, 'Address', colwise(sum, ~count))
+Cam.Lonlat = geocode(Cam$Address)
+Cam = cbind(Cam, Cam.Lonlat)
+```
+
+With data preparation complete I wanted to visualize the locations of speed cameras in NYC. The locations of the cameras were plotted with the size of the bubble representing the number of the number of tickets the camera at that location issued. As shown, Brooklyn and Queens have the highest number of cameras and the highest grossing cameras. The cameras in these boroughs tend to be deployed on long 6 or 8-lane roadways with timed traffic lights (e.g. Queens and Northern Blvds).
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+setwd("C:/Users/TimBo/Downloads/R docs and scripts/NYCSpeedCam")
+load('NYC_Map2.Rdata')
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+library(ggplot2)
+library(ggmap)
+ggmap(get_map('New York City'), extent='device', legend = 'topleft')+
+  geom_point(aes(x=lon, y=lat, size=count), color='red', data=Cam)+
+  scale_size_continuous(range=c(2,8)) +
+  labs(title = 'Map of Speed Camera Locations in NYC', size = 'Tickets/Camera')
+```
+
+To understand if these speed cameras were distributed with the goal of increasing the public's safety two plots depicting the distribution of schools in NYC and vehicle/pedestrian accidents were overlayed on the camera map. As can be seen from the plot the deployment of speed cameras deviates from both of these distributions indicating the cameras were not distributed to maximize safety.
+
+```{r, eval=FALSE, warning=FALSE, message=FALSE}
+Accidents.lastyear = Accidents[Accidents$Date >= as.Date("2013-01-16", "%Y-%m-%d") & 
+                                 Accidents$Date <= as.Date("2013-06-20", "%Y-%m-%d"),]
+Accidents.thisyear = Accidents[Accidents$Date >= as.Date("2014-01-16", "%Y-%m-%d") & 
+                                 Accidents$Date <= as.Date("2014-06-20", "%Y-%m-%d"),]
+```
+```{r, warning=FALSE, message=FALSE}
+ggmap(get_map('New York City'), extent='device', legend='topleft')+
+  geom_point(aes(x=lon, y=lat, size=count), color='red', data=Cam)+ scale_size_continuous(range=c(2,8))+
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), 
+        axis.title.x=element_blank(),axis.title.y=element_blank())+
+  stat_density2d(aes(x=lon, y=lat, fill = ..level.., alpha=..level..), size = 5, bins=10, 
+        geom='polygon', data=School.Loc)+scale_alpha(range = c(0,0.35), guide=FALSE)+ 
+  scale_fill_gradient(limits = c(1,40), low='yellow', high='orange')+
+  labs(title = 'Map of speed camera locations in NYC overlayed with K - 12 school density',
+        size='Tickets/Camera', fill = 'School\nDensity')
+
+ggmap(get_map('New York City'), extent='device', legend='topleft')+
+  geom_point(aes(x=lon, y=lat, size=count), color='red', data=Cam)+ scale_size_continuous(range=c(2,8))+
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), 
+        axis.title.x=element_blank(),axis.title.y=element_blank())+
+  stat_density2d(aes(x=Lon, y=Lat, fill = ..level.., alpha=..level..), size = 5, bins=10, 
+        geom='polygon', data=Accidents.lastyear)+ 
+  scale_fill_gradient(limits = c(1,60), low='light blue', high = 'blue')+
+  scale_alpha(range = c(0.3,0.75), guide=FALSE)+
+  labs(title = 'Map of NYC speed camera locations overlayed\n with accident density before camera deployment (Jan - June 2013)', size='Tickets/Camera', fill = 'Accident\nDensity')
+```
+
+
+```{r, echo=FALSE}
+Cam[which.max(Cam$count),3:4] = c(-73.90751, 40.74186)
+```
+After discovering that camera placement is not designed to maximize the safety of either school-aged children or pedestrians a revenue focus was considered. By NYS law, speed camera placement is only allowed within 1/4 mile from any school building. The placement of a camera outside that radius may indicate city officials are attempting to maximize revenue by issuing more tickets and betting residents will not contest the ticket's legality. To investigate, the most profitable camera was selected and its distance to the nearest 3 schools was computed.
+
+```{r, warning=FALSE, message=FALSE}
+ggmap(get_map(location = c(lon = Cam[which.max(Cam$count), 'lon'], 
+        lat = Cam[which.max(Cam$count), 'lat']), zoom=15), legend='topleft')+ 
+  geom_point(aes(x=lon, y=lat, size=count), color='red', data=Cam)+ scale_size_continuous(range=c(2,8))+
+  geom_point(aes(x=lon, y =lat), size = 3, data = School.Loc)+ 
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), 
+        axis.title.x=element_blank(),axis.title.y=element_blank(), axis.ticks=element_blank())+
+  labs(title = 'The most profitable speed camera and nearest school locations', size = 'Tickets/Camera')
+```
+
+```{r, warning=FALSE, message=FALSE}
+library(plyr)
+library(dplyr)
+mapdist(from = c(lon = Cam[which.max(Cam$count), 'lon'], 
+                 lat = Cam[which.max(Cam$count), 'lat']), to = maxtix.schools$Address)
+```
+
+Note the camera's location, situated on an 8-lane roadway with timed traffic lights just two blocks from the nearest exit on the Brooklyn-Queens Expressway. Visually, the camera location looks close to the school on 55th St & Skillman Ave. However, the computed distance is > 1/10 of a mile outside the distance permitted by law. This is a clear sign of a revenue strategy. Revenue concerns seemed to have outweighed maximizing pedestrian safety. However, if cameras DO prevent pedestrian/vehicle collision they may still be useful, even though they are deployed in sub-optimal intersections. This is the focus of the next section.
+
+# The efficacy of speed cameras in NYC, do they reduce the collision rate?
+
+First we will examine the effect of the speed camera program city-wide and then proceed to analyze the differential effect the speed camera program has had on each borough. The data shows ~10% reduction in traffic accidents city-wide after camera installation in the period from Jan 16 - Jun 20 2014 over the same time period in 2013 and Pearson's X-squared test of association is significant. Traffic accident data is only available on NYC Open Data as far back as Aug 2012. Monthly pedestrian/vehicle collsions over the time available were summed from Aug 2012 - Jun 2014 and visualized in a line plot. The plot shows a large amount of seasonality but the overall trend is apparent, pedestrian/vehicle collisions were decreasing before the installation of the speed cameras and continue to decline at the same rate after installation suggesting speed cameras have not had an influence on accident rates. Fatal accidents also declined during the same 5 month period, from 57 in 2013 to 39 in 2014. This is not surprising given the decline in accidents overall. 
+
+```{r, warning=FALSE, message=FALSE}
+chisq.test(x=c(nrow(Accidents.lastyear),nrow(Accidents.thisyear)))
+
+Accidents$Cut = cut(Accidents$Date, seq(as.Date('2012-07-01'), as.Date('2015-01-01'), by='1 month'))
+by.month = ddply(Accidents, .(Cut), summarize, total=n())
+
+ggplot(by.month, aes(x=as.Date(Cut),y=total))+geom_point()+geom_line()+geom_smooth(method='lm')+
+  labs(title='NYC Accident Rate')+theme_bw()+xlab('')+ylab('Pedestrian/Vehicle Accidents')+ 
+  scale_y_continuous(limits=c(590,1200))
+```
+
+Additional evidence that speed cameras are ineffective came from a plot of an overlay of the accident density after speed camera installation on speed camera locations. If speed cameras are associated with reduced pedestrian/vehicle collisions we would expect the frequency of collisions around a camera to decrease much more rapidly than in areas without cameras. Each camera should "carve out" an area from the accident density if they significantly reduce the rate of accidents. The pedestrian/vehicle accident density from 2013 is almost identical to that of 2014 a clear sign that cameras do not influence the frequency of pedestrian/vehicle collisions.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ggmap(get_map('New York City'), extent='device', legend='topleft')+
+  geom_point(aes(x=lon, y=lat, size=count), color='red', data=Cam)+ scale_size_continuous(range=c(2,8))+
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank(), 
+        axis.title.x=element_blank(),axis.title.y=element_blank())+
+  stat_density2d(aes(x=Lon, y=Lat, fill = ..level.., alpha=..level..), size = 5, bins=10, 
+        geom='polygon', data=Accidents.thisyear)+ 
+  scale_fill_gradient(limits = c(1,60), low='light blue', high = 'blue')+
+  scale_alpha(range = c(0.3,0.75), guide=FALSE)+
+  labs(title = 'Map of NYC speed camera locations overlayed\n with accident density after camera deployment (Jan - Jun 2014)', size='Tickets/Camera', fill = 'Accident\nDensity')
+```
+
+##Camera Impact by Borough
+
+While there isn't any association of cameras with pedestrian accident frequency city-wide perhaps the boroughs with the most cameras have experienced a reduction in accidents that is "masked" in aggregate by increases in accidents in boroughs with fewer speed cameras. The following script summed the number of cameras in each borough and the number of tickets from all cameras in each borough. I then created a contingency table by merging the data with accident numbers from the Accidents data frame. Using these data the impact of the cameras on each borough was visualized. The first plot shows the change in the number of pedestrians killed in vehicle collisions by borough prior to and after camera installation. The size of each bubble in 2014 represents the number of tickets residents received. The number of cameras and tickets appear to have no relationship with the number of fatal accidents. The Bronx had the largest %decline in fatal accidents but has the fewest cameras and tickets. Brooklyn residents received the the second highest number of tickets and have the most cameras of any borough but was the only borough to see its numbers increase in 2014.
+
+A similar analysis was conducted with collisions that were not fatal, each borough shows a decline consistent with the 10% overall decline already noted as compared to 2013. However, the accident rates decline similarly for each borough. If the speed cameras did prevent collisions we would expect to see a much more dramatic decline in Brooklyn and Queens, the two boroughs with the most speed cameras and highest number of tickets issued. Pearson's X-squared test of association between the number of pedestrian/vehicle accidents across the different boroughs (with different numbers of cameras/tickets) was not significant.
+
+```{r, warning=FALSE, message=FALSE}
+camsum = function(x){
+  y = data.frame()
+  for (i in 1:length(x)){
+    y[i,1] = length(grep(x[i], Cam$Address, ignore.case=T))
+    y[i,2] = sum(Cam$count[grep(x[i], Cam$Address, ignore.case=T)])
+  }
+  y = cbind(y, x)
+  return(y)
+}
+
+byBorough = camsum(c('BROOKLYN','STATEN ISLAND','QUEENS','NEW YORK','BRONX'))
+colnames(byBorough) = c('Cameras','Tickets','Borough')
+byBorough$Borough = as.character(byBorough$Borough)
+byBorough$Borough[4] = 'MANHATTAN'
+
+this.yr = ddply(Accidents.thisyear, .(Borough), summarize, 
+                Peds.Injured = sum(Peds.Injured), Peds.Killed = sum(Peds.Killed))
+last.yr = ddply(Accidents.lastyear, .(Borough), summarize, 
+                Peds.Injured = sum(Peds.Injured), Peds.Killed = sum(Peds.Killed))
+
+acc.by.borough = inner_join(this.yr, last.yr, by='Borough')
+byBorough = inner_join(acc.by.borough, byBorough, by='Borough')
+
+library(reshape2)
+mBorough = melt(byBorough, id = c('Borough','Cameras','Tickets'))
+mBorough$Year = rep(2014:2013, each=10)
+mBorough$variable = rep(c('Killed', 'Injured'), each = 5)
+mBorough$Cameras[11:20]=0
+mBorough$Tickets[11:20]=1
+
+table = dcast(mBorough, Borough~Year, sum)
+table$Borough = NULL
+chisq.test(table)
+```
+```{r, warning=FALSE, message=FALSE}
+ggplot(mBorough[mBorough$variable == 'Killed',], aes(x=Borough, y=value, color=as.factor(Year)))+
+  ylab('Number of Pedestrians Killed')+ geom_point(aes(y = value, group = variable, size = Tickets))+
+  geom_line(aes(y=value,group=Year))+ theme_bw()+
+  labs(title='Number of pedestrians deaths before and after camera installation', color='Year')+
+  theme(axis.text.x=element_text(angle=50, hjust=1), axis.title.x=element_blank())
+
+ggplot(mBorough[mBorough$variable == 'Injured',], aes(x=Borough, y=value, color=as.factor(Year)))+
+  ylab('Number of Pedestrians Injured')+ geom_point(aes(y = value, group = variable, size = Tickets))+
+  geom_line(aes(y=value,group=Year))+theme_bw()+
+  labs(title='Number of pedestrians injured before and after camera installation', color='Year')+
+  theme(axis.text.x=element_text(angle=50, hjust=1), axis.title.x=element_blank())
+```
+
+##Conclusion
+
+In the first 6 months of operation the speed camera program has justified the transfer of $4.2 million in wealth from NYC citizens to local government coffers. The program appears to be revenue focused as the camera locations fail to conform to distributions that would optimize pedestrian safety. Additionally, it appears that at least one camera operates outside the boundaries allowed by law further corroborating this conclusion. Furthermore, this study has found no evidence that speed cameras reduce collisions as suggested by the government entities and speed camera vendors. Just months after the speed camera program debut, NYC lowered its speed limit by an additional 5MPH. This has also been interpreted as a revenue maximizing strategy which may result to a transfer of wealth in excess of $12M from citizens in 2015.
